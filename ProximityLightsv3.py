@@ -64,7 +64,7 @@ def IsLight(a):
 
 
 def IsHidden(a): # simple function used for filtering. if a light is hidden, return False.
-    if bpy.data.objects[a.name].hide_get() == True:
+    if bpy.data.objects[a.name].hide_get() == True or len(a.users_collection) == 0:
         return False
     else:
         return True
@@ -72,12 +72,12 @@ def IsHidden(a): # simple function used for filtering. if a light is hidden, ret
 def IsOverridden(a): # simple function used for filtering. if a light is overridden, return True.
     if a.type == 'EMPTY':
         return False
-    if a.data.get('LIGHTOVERRIDE') != None:
+    if a.get('LIGHTOVERRIDE') != None:
         return True
     else:
         return False
 
-def ExcludeLight(a, b):
+def ExcludeLight(a, b, c= None):
     '''if bpy.data.collections.get('OFFLIGHTS') == None:
         x = bpy.data.collections.new('OFFLIGHTS')
         x.use_fake_user = True
@@ -104,8 +104,11 @@ def ExcludeLight(a, b):
         EMPTYLIGHT.rotation_euler = a.rotation_euler
         EMPTYLIGHT.scale = a.scale
         EMPTYLIGHT['ISLIGHT'] = True
+        EMPTYLIGHT[a.data.type] = True
         EMPTYLIGHT['DATA'] = a.data.name
         EMPTYLIGHT['NAME'] = a.name
+        if c == True:
+            EMPTYLIGHT['PERMHIDDEN'] = True
         if a.data.users == 1:
             a.data.use_fake_user = True
         bpy.data.objects.remove(a)
@@ -113,11 +116,39 @@ def ExcludeLight(a, b):
         
 def GetLightTypes(a):
     # 4 lambda functions to determine what kind of light a light is.
-    POINT = lambda a: a.data.type == 'POINT'
+    '''POINT = lambda a: a.data.type == 'POINT'
     SUN = lambda a: a.data.type == 'SUN'
     SPOT = lambda a: a.data.type == 'SPOT'
-    AREA = lambda a: a.data.type == 'AREA'
-
+    AREA = lambda a: a.data.type == 'AREA' '''
+    def POINT(a):
+        if a.get('POINT') != None:
+            print(a)
+            return True
+        if a.type != 'LIGHT':
+            return False
+        if a.data.type == 'POINT':
+            return True
+    def SUN(a):
+        if a.get('SUN') != None:
+            return True
+        if a.type != 'LIGHT':
+            return False
+        if a.data.type == 'SUN':
+            return True
+    def SPOT(a):
+        if a.get('SPOT') != None:
+            return True
+        if a.type != 'LIGHT':
+            return False
+        if a.data.type == 'SPOT':
+            return True
+    def AREA(a):
+        if a.get('AREA') != None:
+            return True
+        if a.type != 'LIGHT':
+            return False
+        if a.data.type == 'AREA':
+            return True
     # return the amount of lights under each light type.
 
     if a == 'POINT':
@@ -175,18 +206,21 @@ def OptimizeLights(self = None, context = None):
             # it's a lot to explain. variable "l" contains a range starting from 0 ending at whatever the amount of lights in the scene is.
             # the slicing returns a section of the "l" variable. if frame modulo is set to 30 and there are 120 lights in a scene, then each frame will have 4 different lights Proximity Lights needs to figure out.
             # if the current frame % 30 == 15, it will return the 15th section of the list. i hope that clears things up
-            '''if LIGHTS[i].data.get('LIGHTOVERRIDE') or LIGHTS[i].data.get('PERMHIDDEN'): # if the light has an override property, skip it
-                continue'''
+            if LIGHTS[i].get('LIGHTOVERRIDE') or LIGHTS[i].get('PERMHIDDEN'): # if the light has an override property, skip it
+                continue
             if math.dist(bpy.context.scene.camera.location, LIGHTS[i].location) > bpy.context.scene.hisanimdrag.value*2 and LIGHTS[i].data.type != 'SUN': # if the light is outside of the defined distance and is not a sun, hide it 
                 ExcludeLight(LIGHTS[i], 'HIDE')
             else: # do the opposite
                 ExcludeLight(LIGHTS[i], 'SHOW')
     elif (f() % t() == 0) if bpy.context.scene.hisanimmodulo and bpy.context.screen.is_animation_playing else True: # refresh all at once, but do it once every other amount of frames when playing if enabled
         for i in LIGHTS:
-            '''if i.data.get('LIGHTOVERRIDE') or i.data.get('PERMHIDDEN'):
+            if i.get('LIGHTOVERRIDE') or i.get('PERMHIDDEN'):
                 print(i.name, "HIDDEN")
-                continue'''
-            if math.dist(bpy.context.scene.camera.location, i.location) > bpy.context.scene.hisanimdrag.value*2 and not i.data.type == 'SUN':
+                continue
+            if math.dist(bpy.context.scene.camera.location, i.location) > bpy.context.scene.hisanimdrag.value*2:# and not i.data.type == 'SUN':
+                if i.type == 'LIGHT':
+                    if i.data.type == 'SUN':
+                        continue
                 ExcludeLight(i, 'HIDE')
             else:
                 ExcludeLight(i, 'SHOW')
@@ -199,9 +233,9 @@ class HISANIM_OT_LIGHTOVERRIDE(bpy.types.Operator):
 
     def execute(self, context):
         for i in bpy.context.selected_objects:
-            if i.type != "LIGHT" or i.data.get('LIGHTOVERRIDE') != None:
+            if i.type != "LIGHT" or i.get('LIGHTOVERRIDE') != None:
                 continue
-            i.data['LIGHTOVERRIDE'] = True
+            i['LIGHTOVERRIDE'] = True
         return {'FINISHED'}
 
 class HISANIM_OT_HIDELIGHT(bpy.types.Operator):
@@ -212,12 +246,9 @@ class HISANIM_OT_HIDELIGHT(bpy.types.Operator):
 
     def execute(self, context):
         for i in bpy.context.selected_objects:
-            if i.type != "LIGHT" or i.data.get('PERMHIDDEN') != None:
+            if i.type != "LIGHT" or i.get('PERMHIDDEN') != None:
                 continue
-            i.data['LIGHTOVERRIDE'] = True
-            i.data['PERMHIDDEN'] = True
-            i.hide_set(True)
-            i.hide_render = True
+            ExcludeLight(i, 'HIDE', True)
         return {'FINISHED'}
 
 class HISANIM_OT_REMOVEOVERRIDES(bpy.types.Operator):
@@ -228,14 +259,14 @@ class HISANIM_OT_REMOVEOVERRIDES(bpy.types.Operator):
 
     def execute(self, context):
         for i in bpy.context.selected_objects:
-            if i.type != "LIGHT" or (i.data.get('LIGHTOVERRIDE') == None and i.data.get('PERMHIDDEN') == None):
+            if i.type != "LIGHT" or (i.get('LIGHTOVERRIDE') == None and i.get('PERMHIDDEN') == None):
                 continue
-            if i.data.get('LIGHTOVERRIDE'):
-                del i.data['LIGHTOVERRIDE']
-            if i.data.get('PERMHIDDEN'):
+            if i.get('LIGHTOVERRIDE'):
+                del i['LIGHTOVERRIDE']
+            if i.get('PERMHIDDEN'):
                 i.hide_set(False)
                 i.hide_render = False
-                del i.data['PERMHIDDEN']
+                del i['PERMHIDDEN']
         return {'FINISHED'}
 
 class HISANIM_OT_REVERTLIGHTS(bpy.types.Operator):
@@ -246,8 +277,7 @@ class HISANIM_OT_REVERTLIGHTS(bpy.types.Operator):
 
     def execute(self, execute):
         for i in list(filter(IsLight, bpy.data.objects)):
-            i.hide_set(False)
-            i.hide_render = False
+            ExcludeLight(i, 'SHOW')
         return {'FINISHED'}
 
 def hisanimupdates(self, value):
