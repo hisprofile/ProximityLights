@@ -2,13 +2,13 @@ bl_info = {
     "name" : "Proximity Lights",
     "description" : "Disable lights far away from the camera",
     "author" : "hisanimations",
-    "version" : (1, 0),
+    "version" : (1, 2, 1),
     "blender" : (3, 0, 0),
     "location" : "Properties > Tools > Proximity Lights",
     "support" : "COMMUNITY",
     "category" : "Lighting",
 }
-
+# made to help prevent lighting crashes/improve performance in scene's with a high light count
 import bpy, math
 from bpy.types import *
 from mathutils import *
@@ -44,7 +44,7 @@ class HISANIM_PT_LIGHTDIST(bpy.types.Panel):
         row.prop(context.scene, 'hisanimenablespread', text='Spread Out Refresh')
         row.enabled = True if context.scene.hisanimmodulo else False
         row=layout.row()
-        row.prop(context.scene, 'hisanimexclude', text='Superhide lights')
+        row.prop_search(context.scene, 'prxlightcollection', bpy.data, 'collections', text='Light Collection')
         row=layout.row()
         row.prop(context.scene, 'hisanimlightstats', text='Light Statistics')
         if context.scene.hisanimlightstats:
@@ -55,51 +55,124 @@ class HISANIM_PT_LIGHTDIST(bpy.types.Panel):
             layout.label(text=f'''{str(GetLightTypes("SPOT"))+(" spot lights" if GetLightTypes("SPOT")!=1 else " spot light")}''')
             layout.label(text=f'''{str(GetLightTypes("AREA"))+(" area lights" if GetLightTypes("AREA")!=1 else " area light")}''')
 
-IsLight = lambda a: a.type=='LIGHT' # simple function used for filtering. if the object is a light, return True.
+# simple function used for filtering. if the object is or intended to be a light, return True.
+def IsLight(a):
+    if a.type == 'LIGHT':
+        return True
+    elif a.type == 'EMPTY' and a.get('ISLIGHT'):
+        return True
 
-def IsHidden(a): # simple function used for filtering. if a light is hidden, return False.
-    if bpy.data.objects[a.name].hide_get() == True:
+
+def IsHidden(a): # simple function used for filtering. essentially counts how many lights are visible in the scene.
+    if bpy.data.objects[a.name].type != 'LIGHT':
         return False
     else:
         return True
 
 def IsOverridden(a): # simple function used for filtering. if a light is overridden, return True.
-    if a.data.get('LIGHTOVERRIDE') != None:
+    if a.type == 'EMPTY':
+        return False
+    if a.get('LIGHTOVERRIDE') != None:
         return True
     else:
         return False
 
-def ExcludeLight(a, b):
-    if bpy.data.collections.get('OFFLIGHTS') == None:
-        bpy.context.scene.collection.children.link(bpy.data.collections.new('OFFLIGHTS'))
-        bpy.context.view_layer.layer_collection.children['OFFLIGHTS'].exclude = True
-        bpy.context.view_layer.layer_collection.children['OFFLIGHTS'].hide_viewport = True
-        bpy.data.collections['OFFLIGHTS'].hide_render = True
-    if b == 'SHOW' and (a.data.get('COLLECTION') != None or a.data.get('COLLECTION') == 'OFFLIGHTS'):
-        if bpy.data.collections.get(a.data['COLLECTION']) == None:
-            bpy.context.scene.collection.objects.link(a)
+def ExcludeLight(a, b, c= None): # multi-purpose light excluder.
+    # if a light is given instructions to hide:
+    # 1. an empty will take its place
+    # 2. the empty will store the light's data,
+    # location, rotation, scale, and linked collection
+    # in the form of custom property strings
+    # 3. the light will be deleted, and its data will be stored.
+    
+    # if a "light" (empty) is given instructions to show:
+    # 1. a new light will be created using the data stored
+    # in the empty
+    # 2. the light will reuse loc, rot, scale, and collection data
+    # 3. the light will be linked to its former collection
+    # 4. the empty will be deleted.
+    if b == 'SHOW' and a.type != 'LIGHT':
+        LIGHT = bpy.data.objects.new(a.name, bpy.data.lights[a.get('DATA')])
+        LIGHT.location = a.location
+        LIGHT.rotation_euler = a.rotation_euler
+        LIGHT.scale = a.scale
+        LIGHT.data = bpy.data.lights[a.get('DATA')]
+        LIGHT.name = a.get('NAME')
+        if bpy.data.collections.get(a.get('COLLECTION')) != None:
+            bpy.data.collections[a.get('COLLECTION')].objects.link(LIGHT)
         else:
-            bpy.data.collections[a.data['COLLECTION']].objects.link(a)
-        bpy.data.collections['OFFLIGHTS'].objects.unlink(a)
-        del a.data['COLLECTION']
+            bpy.context.scene.collection.objects.link(LIGHT)
+        bpy.data.objects.remove(a)
         
-        
-    if b == 'HIDE' and a.data.get('COLLECTION') == None:
-        if a.data.get('COLLECTION') != 'OFFLIGHTS':
-            a.data['COLLECTION'] = a.users_collection[0].name
-        if bpy.data.collections.get(a.data['COLLECTION']) == None:
-            bpy.context.scene.collection.objects.unlink(a)
+    if b == 'HIDE' and a.type != 'EMPTY':
+        EMPTYLIGHT = bpy.data.objects.new('PRXLIGHT_PLACEHOLDER', None)
+        EMPTYLIGHT.empty_display_type = 'PLAIN_AXES'
+        EMPTYLIGHT.use_fake_user = True
+        EMPTYLIGHT.location = a.location
+        EMPTYLIGHT.rotation_euler = a.rotation_euler
+        EMPTYLIGHT.scale = a.scale
+        EMPTYLIGHT['ISLIGHT'] = True
+        EMPTYLIGHT[a.data.type] = True
+        EMPTYLIGHT['DATA'] = a.data.name
+        EMPTYLIGHT['NAME'] = a.name
+        EMPTYLIGHT['COLLECTION'] = a.users_collection[0].name
+        EMPTYLIGHT['HIDDEN'] = True
+        if bpy.data.collections.get(EMPTYLIGHT.get('COLLECTION')) != None:
+            bpy.data.collections[EMPTYLIGHT.get('COLLECTION')].objects.link(EMPTYLIGHT)
         else:
-            bpy.data.collections[a.data['COLLECTION']].objects.unlink(a)
-        bpy.data.collections['OFFLIGHTS'].objects.link(a)
+            bpy.context.scene.collection.objects.link(EMPTYLIGHT)
+        if c == True:
+            EMPTYLIGHT['PERMHIDDEN'] = True
+        if a.data.users == 1:
+            a.data.use_fake_user = True
+        bpy.data.objects.remove(a)
+        
+# there is a specific reason why i was forced to do this. my 2 other options to go about this were:
+# 1. to hide the lights from the viewport and render
+# 2. to move the lights into an excluded collection
+# doing all of this was fine. manually hiding or excluding lights worked well with blender, and whenever i
+# tried to render, the render went through without crashing. obviously, it's preferred to automate this process
+# with a script. originally, this script did just that. however, activating the addon in a scene with a high light
+# count appeared to hinder the integrity of the .blend file. automatically optimizing the lights would *always* result in a crash.
+# the crash logs said this was due to something regarding a "layer_collection_sync" or something like that.
+# so automatically hiding or moving lights was not a fit option. my last idea was to unload them by replacing outbound
+# lights with an empty. fortunately, this worked! i was no longer needed to search for a solution, and was able to
+# move on with the TF2 Map Pack. rendering no longer crashes.
 
+        
 def GetLightTypes(a):
-    # 4 lambda functions to determine what kind of light a light is.
-    POINT = lambda a: a.data.type == 'POINT'
-    SUN = lambda a: a.data.type == 'SUN'
-    SPOT = lambda a: a.data.type == 'SPOT'
-    AREA = lambda a: a.data.type == 'AREA'
-
+    # 4 functions to determine what kind of light a light is.
+    # if an object has a custom property that defines it as a point/sun/spot/area light,
+    # return true. however, if the object is an empty but does not have a tag, return false.
+    # but if the object is at least a light and is a point/sun/spot/area light, return true.
+    def POINT(a):
+        if a.get('POINT') != None:
+            return True
+        if a.type != 'LIGHT':
+            return False
+        if a.data.type == 'POINT':
+            return True
+    def SUN(a):
+        if a.get('SUN') != None:
+            return True
+        if a.type != 'LIGHT':
+            return False
+        if a.data.type == 'SUN':
+            return True
+    def SPOT(a):
+        if a.get('SPOT') != None:
+            return True
+        if a.type != 'LIGHT':
+            return False
+        if a.data.type == 'SPOT':
+            return True
+    def AREA(a):
+        if a.get('AREA') != None:
+            return True
+        if a.type != 'LIGHT':
+            return False
+        if a.data.type == 'AREA':
+            return True
     # return the amount of lights under each light type.
 
     if a == 'POINT':
@@ -149,7 +222,10 @@ def t(): # get desired frame modulo
 def OptimizeLights(self = None, context = None):
     if bpy.context.scene.hisaenablelightdist == False: # if the option to toggle light optimizations is set to False, do nothing
         return None
-    LIGHTS = list(filter(IsLight, bpy.data.objects))
+    if bpy.context.scene.prxlightcollection == None:
+        LIGHTS = list(filter(IsLight, bpy.data.objects))
+    else:
+        LIGHTS = list(filter(IsLight, bpy.context.scene.prxlightcollection.objects))
     l = list(range(0, len(LIGHTS))) # create a list of lights and a range of light amount
     if bpy.context.scene.hisanimenablespread and bpy.context.screen.is_animation_playing and bpy.context.scene.hisanimmodulo:
         # if Spread Out Refresh is enabled and the animation is playing and Refresh Every Amount of Frames is enabled, do this:
@@ -157,39 +233,26 @@ def OptimizeLights(self = None, context = None):
             # it's a lot to explain. variable "l" contains a range starting from 0 ending at whatever the amount of lights in the scene is.
             # the slicing returns a section of the "l" variable. if frame modulo is set to 30 and there are 120 lights in a scene, then each frame will have 4 different lights Proximity Lights needs to figure out.
             # if the current frame % 30 == 15, it will return the 15th section of the list. i hope that clears things up
-            if LIGHTS[i].data.get('LIGHTOVERRIDE') or LIGHTS[i].data.get('PERMHIDDEN'): # if the light has an override property, skip it
+            
+            # as of the 27th of January, this does not work and i am not sure why.
+            
+            if LIGHTS[i].get('LIGHTOVERRIDE') or LIGHTS[i].get('PERMHIDDEN'): # if the light has an override property, skip it
                 continue
             if math.dist(bpy.context.scene.camera.location, LIGHTS[i].location) > bpy.context.scene.hisanimdrag.value*2 and LIGHTS[i].data.type != 'SUN': # if the light is outside of the defined distance and is not a sun, hide it 
-                #LIGHTS[i].hide_set(True)
-                LIGHTS[i].hide_render = True
-                LIGHTS[i].data['HIDDEN'] = True
-                if bpy.context.scene.hisanimexclude:
-                    ExcludeLight(LIGHTS[i], 'HIDE')
-                continue
+                ExcludeLight(LIGHTS[i], 'HIDE')
             else: # do the opposite
-                LIGHTS[i].data['HIDDEN'] = False
-                #LIGHTS[i].hide_set(False)
-                LIGHTS[i].hide_render = False
-                if bpy.context.scene.hisanimexclude:
-                    ExcludeLight(LIGHTS[i], 'SHOW')
-                continue
+                ExcludeLight(LIGHTS[i], 'SHOW')
     elif (f() % t() == 0) if bpy.context.scene.hisanimmodulo and bpy.context.screen.is_animation_playing else True: # refresh all at once, but do it once every other amount of frames when playing if enabled
         for i in LIGHTS:
-            if i.data.get('LIGHTOVERRIDE') or i.data.get('PERMHIDDEN'):
-                print(i.name, "HIDDEN")
+            if i.get('LIGHTOVERRIDE') or i.get('PERMHIDDEN'):
                 continue
-            if math.dist(bpy.context.scene.camera.location, i.location) > bpy.context.scene.hisanimdrag.value*2 and not i.data.type == 'SUN':
-                #i.hide_set(True, view_layer=bpy.context.view_layer)
-                i.hide_render = True
-                i.data['HIDDEN'] = True
-                if bpy.context.scene.hisanimexclude:
-                    ExcludeLight(i, 'HIDE')
+            if math.dist(bpy.context.scene.camera.location, i.location) > bpy.context.scene.hisanimdrag.value*2:# and not i.data.type == 'SUN':
+                if i.type == 'LIGHT':
+                    if i.data.type == 'SUN':
+                        continue
+                ExcludeLight(i, 'HIDE')
             else:
-                i['HIDDEN'] = False
-                #i.hide_set(False)
-                i.hide_render = False
-                if bpy.context.scene.hisanimexclude:
-                    ExcludeLight(i, 'SHOW')
+                ExcludeLight(i, 'SHOW')
 
 class HISANIM_OT_LIGHTOVERRIDE(bpy.types.Operator):
     # make Proximity Lights skip lights that have been told to override
@@ -199,9 +262,9 @@ class HISANIM_OT_LIGHTOVERRIDE(bpy.types.Operator):
 
     def execute(self, context):
         for i in bpy.context.selected_objects:
-            if i.type != "LIGHT" or i.data.get('LIGHTOVERRIDE') != None:
+            if i.type != "LIGHT" or i.get('LIGHTOVERRIDE') != None:
                 continue
-            i.data['LIGHTOVERRIDE'] = True
+            i['LIGHTOVERRIDE'] = True
         return {'FINISHED'}
 
 class HISANIM_OT_HIDELIGHT(bpy.types.Operator):
@@ -212,30 +275,27 @@ class HISANIM_OT_HIDELIGHT(bpy.types.Operator):
 
     def execute(self, context):
         for i in bpy.context.selected_objects:
-            if i.type != "LIGHT" or i.data.get('PERMHIDDEN') != None:
+            if i.type != "LIGHT" or i.get('PERMHIDDEN') != None:
                 continue
-            i.data['LIGHTOVERRIDE'] = True
-            i.data['PERMHIDDEN'] = True
-            i.hide_set(True)
-            i.hide_render = True
+            ExcludeLight(i, 'HIDE', True)
         return {'FINISHED'}
 
 class HISANIM_OT_REMOVEOVERRIDES(bpy.types.Operator):
-    # delete any overrides
+    # delete any overrides from selected objects
     bl_idname = 'hisanim.removeoverrides'
     bl_label = 'Remove Overrides'
     bl_description = 'Make a light hidable again by the Light Optimizer.'
 
     def execute(self, context):
         for i in bpy.context.selected_objects:
-            if i.type != "LIGHT" or (i.data.get('LIGHTOVERRIDE') == None and i.data.get('PERMHIDDEN') == None):
+            if i.type != "LIGHT" or (i.get('LIGHTOVERRIDE') == None and i.get('PERMHIDDEN') == None):
                 continue
-            if i.data.get('LIGHTOVERRIDE'):
-                del i.data['LIGHTOVERRIDE']
-            if i.data.get('PERMHIDDEN'):
+            if i.get('LIGHTOVERRIDE'):
+                del i['LIGHTOVERRIDE']
+            if i.get('PERMHIDDEN'):
                 i.hide_set(False)
                 i.hide_render = False
-                del i.data['PERMHIDDEN']
+                del i['PERMHIDDEN']
         return {'FINISHED'}
 
 class HISANIM_OT_REVERTLIGHTS(bpy.types.Operator):
@@ -246,8 +306,7 @@ class HISANIM_OT_REVERTLIGHTS(bpy.types.Operator):
 
     def execute(self, execute):
         for i in list(filter(IsLight, bpy.data.objects)):
-            i.hide_set(False)
-            i.hide_render = False
+            ExcludeLight(i, 'SHOW')
         return {'FINISHED'}
 
 def hisanimupdates(self, value):
@@ -300,6 +359,7 @@ def register():
     bpy.types.Scene.hisanimmodulo = bpy.props.BoolProperty()
     bpy.types.Scene.hisanimlightstats = bpy.props.BoolProperty(default=True)
     bpy.types.Scene.hisanimexclude = bpy.props.BoolProperty(default=True, description='Move lights into an excluded collection. May help prevent crashes')
+    bpy.types.Scene.prxlightcollection = bpy.props.PointerProperty(type=bpy.types.Collection, description='Only iterate through one collection. May improve performance')
     
 def unregister():
     for i in classes:
