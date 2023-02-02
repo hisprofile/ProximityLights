@@ -153,6 +153,20 @@ def ExcludeLight(a, b, c= None): # multi-purpose light excluder.
 # lights with an empty. fortunately, this worked! i was no longer needed to search for a solution, and was able to
 # move on with the TF2 Map Pack. rendering no longer crashes.
 
+'''strike all of that! i was comPLETELY wrong. i wrote that comment on 1/24/23 i think? it's 2/2/23 now. anyways, the old method was this:
+unload lights from the scene by replacing them with an empty that contained all the lights' information when the light
+was outside of the range from the camera. once an empty was within range again, a light would be spawned from it using the
+information the empty contained, and then the empty was deleted. it was slow, but it worked! until it didn't! blender
+still crashed when rendering cause there was just too much to do between every frame. it crashed for a totally different
+reason as well. 5 days later, i had found out that when a light's energy is set to 0, the light gets ignored by the scene.
+https://cdn.discordapp.com/attachments/723010093033062540/1065294547535540364/image.png mfw
+i NEVER knew about that before. so with my newfound knowledge, i rewrote parts of Proximity Lights to make lights get set to 0.
+the result? a product that was like 700% more efficient. playing back animation was faster, changing the range was faster,
+everything was faster. and with so little that Proximity Lights needs to do, it was a lot more stable. with this new method
+now realized, i made a test render of ctf_doublecross without modifying a single light (except through proximity lights of course.)
+https://twitter.com/his_animations/status/1619790423849041920 the whole thing rendered without crashing. it was awesome!
+
+For the most part, Proximity Lights is finished.'''
         
 def GetLightTypes(a):
     # 4 functions to determine what kind of light a light is.
