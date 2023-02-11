@@ -61,10 +61,10 @@ class HISANIM_PT_LIGHTDIST(bpy.types.Panel):
         if context.scene.hisanimlightstats:
             layout.label(text=f'Active Lights: {GetActiveLights("ACTIVE")}{"/128 Max" if bpy.context.scene.render.engine=="BLENDER_EEVEE" else ""}') # get amount of lights using each light type
             layout.label(text=f'{str(GetActiveLights("OVERRIDDEN"))+ (" Overridden lights" if GetActiveLights("OVERRIDDEN") !=1 else " Overridden light")}')
-            layout.label(text=f'''{str(GetLightTypes("POINT"))+(" point lights" if GetLightTypes("POINT")!=1 else " point light")}''')
+            layout.label(text=f'''{str(GetLightTypes("POINT"))+(" point lights" if GetLightTypes("POINT")!=1 else " point light")} ({len(list(filter(IsHidden, GetLightTypes("POINT", "VERBOSE"))))} active)''')
             layout.label(text=f'''{str(GetLightTypes("SUN"))+(" sun lights" if GetLightTypes("SUN")!=1 else " sun light")}''')
-            layout.label(text=f'''{str(GetLightTypes("SPOT"))+(" spot lights" if GetLightTypes("SPOT")!=1 else " spot light")}''')
-            layout.label(text=f'''{str(GetLightTypes("AREA"))+(" area lights" if GetLightTypes("AREA")!=1 else " area light")}''')
+            layout.label(text=f'''{str(GetLightTypes("SPOT"))+(" spot lights" if GetLightTypes("SPOT")!=1 else " spot light")} ({len(list(filter(IsHidden, GetLightTypes("SPOT", "VERBOSE"))))} active)''')
+            layout.label(text=f'''{str(GetLightTypes("AREA"))+(" area lights" if GetLightTypes("AREA")!=1 else " area light")} ({len(list(filter(IsHidden, GetLightTypes("AREA", "VERBOSE"))))} active)''')
 
 def MAP(x,a,b,c,d, clamp=None):
    y=(x-a)/(b-a)*(d-c)+c
@@ -101,19 +101,6 @@ def IsOverridden(a): # simple function used for filtering. if a light is overrid
         return False
 
 def ExcludeLight(a, b, c= None): # multi-purpose light excluder.
-    # if a light is given instructions to hide:
-    # 1. an empty will take its place
-    # 2. the empty will store the light's data,
-    # location, rotation, scale, and linked collection
-    # in the form of custom property strings
-    # 3. the light will be deleted, and its data will be stored.
-    
-    # if a "light" (empty) is given instructions to show:
-    # 1. a new light will be created using the data stored
-    # in the empty
-    # 2. the light will reuse loc, rot, scale, and collection data
-    # 3. the light will be linked to its former collection
-    # 4. the empty will be deleted.
     if b == 'SHOW' and a.data.get('DEFAULT') != None:
         LIGHT = a
         if bpy.context.scene.hisanimmixpower and a.get('POWER') != None:
@@ -180,15 +167,23 @@ def GetLightTypes(a, b=None):
     # return the amount of lights under each light type.
 
     if a == 'POINT':
+        if b == 'VERBOSE':
+            return list(filter(POINT, list(filter(IsLightNoIgnore, bpy.data.objects))))
         return len(list(filter(POINT, list(filter(IsLightNoIgnore, bpy.data.objects)))))
     if a == 'SUN':
+        if b == 'VERBOSE':
+            return list(filter(SUN, list(filter(IsLightNoIgnore, bpy.data.objects))))
         return len(list(filter(SUN, list(filter(IsLightNoIgnore, bpy.data.objects)))))
     if a == 'SPOT':
+        if b == 'VERBOSE':
+            return list(filter(SPOT, list(filter(IsLightNoIgnore, bpy.data.objects))))
         return len(list(filter(SPOT, list(filter(IsLightNoIgnore, bpy.data.objects)))))
     if a == 'AREA':
+        if b == 'VERBOSE':
+            return list(filter(AREA, list(filter(IsLightNoIgnore, bpy.data.objects))))
         return len(list(filter(AREA, list(filter(IsLightNoIgnore, bpy.data.objects)))))
 
-def GetActiveLights(stats):
+def GetActiveLights(stats=None):
     # 2 modes. return the amount of lights that are not hidden, return the amount of lights that are overridden
     if stats == 'ACTIVE':
         return len(list(filter(IsHidden, list(filter(IsLight, bpy.data.objects)))))
@@ -267,7 +262,7 @@ def OptimizeLights(self = None, context = None):
                 
     elif (f() % t() == 0) if CS.hisanimmodulo and bpy.context.screen.is_animation_playing else True: # refresh all at once, but do it once every other amount of frames when playing if enabled
         for i in LIGHTS:
-            if i.get('LIGHTOVERRIDE') or i.get('PERMHIDDEN'):
+            if i.get('LIGHTOVERRIDE') or i.get('PERMHIDDEN') or i.data.type == 'SUN':
                 continue
             if math.dist(CS.camera.location, i.location) > CS.hisanimdrag.value:# and not i.data.type == 'SUN':
                 if i.type == 'LIGHT':
@@ -279,7 +274,6 @@ def OptimizeLights(self = None, context = None):
                 DIST = CS.hisanimdrag.value
                 if i.data.get('POWER') != None:
                     i.data.energy = MAP(math.dist(CS.camera.location, i.location), DIST-(CS.hisanimstartfrom*DIST), DIST-(CS.hisanimendat*DIST), 0, i.data.get('POWER'), True)
-    #print(f'Active Lights: {GetActiveLights("ACTIVE")}{"/128 Max" if bpy.context.scene.render.engine=="BLENDER_EEVEE" else ""}')
 class HISANIM_OT_LIGHTOVERRIDE(bpy.types.Operator):
     # make Proximity Lights skip lights that have been told to override
     bl_idname = 'hisanim.lightoverride'
@@ -290,11 +284,10 @@ class HISANIM_OT_LIGHTOVERRIDE(bpy.types.Operator):
         for i in bpy.context.selected_objects:
             if i.type != "LIGHT" or i.get('LIGHTOVERRIDE') != None:
                 continue
-            #if GetActiveLights('ACTIVE') >= 128:
-                #self.report({'INFO'}, 'Met max amount of overridden lights!')
+            if GetActiveLights() >= 128:
+                self.report({'INFO'}, 'Met max amount of overridden lights!')
+                return {'CANCELLED'}
             i['LIGHTOVERRIDE'] = True
-            #OptimizeLights()
-            #i.data.energy = i.data.get('DEFAULT') if i.data.get('POWER') == None else i.data.get('POWER')
             if i.get('PERMHIDDEN') != None:
                 del i['PERMHIDDEN']
             if i.data.get('DEFAULT') != None:
@@ -333,8 +326,6 @@ class HISANIM_OT_REMOVEOVERRIDES(bpy.types.Operator):
             if i.get('LIGHTOVERRIDE'):
                 del i['LIGHTOVERRIDE']
             if i.get('PERMHIDDEN'):
-                #i.hide_set(False)
-                #i.hide_render = False
                 del i['PERMHIDDEN']
         return {'FINISHED'}
 
@@ -394,6 +385,8 @@ class HISANIM_OT_MIXPOWER(bpy.types.Operator):
             else:
                 LIGHTS = list(filter(IsLight, bpy.context.scene.prxlightcollection.objects))
             for i in LIGHTS:
+                if i.data.type == 'SUN':
+                    continue
                 if i.data.get('DEFAULT') != None:
                     i.data['POWER'] = i.data['DEFAULT']
                 else:
